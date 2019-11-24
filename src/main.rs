@@ -1,12 +1,16 @@
 #[macro_use]
-extern crate hyper;
+extern crate lazy_static;
 extern crate futures;
+extern crate hyper;
 extern crate rand;
+extern crate regex;
 extern crate tokio;
 
 use futures::{future, future::Future, Stream};
 use hyper::{service::service_fn, Body, Method, Request, Response, Server, StatusCode};
+use hyper_staticfile::FileChunkStream;
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
+use regex::Regex;
 use std::{
     fs,
     io::{Error, ErrorKind},
@@ -15,6 +19,10 @@ use std::{
 use tokio::fs::File;
 
 static INDEX: &[u8] = b"Index to images service.";
+
+lazy_static! {
+    static ref DOWNLOAD_FILE: Regex = Regex::new("^/download/(?P<filename>\\w{20})?$").unwrap();
+}
 
 fn main() {
     // Directory to hold images
@@ -44,9 +52,26 @@ fn imageservice_handler(
 ) -> Box<dyn Future<Item = Response<Body>, Error = std::io::Error> + Send> {
     match (req.method(), req.uri().path().to_owned().as_ref()) {
         (&Method::GET, "/") => Box::new(future::ok(Response::new(INDEX.into()))),
+        (&Method::GET, path) if path.starts_with("/download") => {
+            if let Some(cap) = DOWNLOAD_FILE.captures(path) {
+                let filename = cap.name("filename").unwrap().as_str();
+                let mut filepath = files.to_path_buf();
+                filepath.push(filename);
+
+                let open_file = File::open(filepath);
+                let body = open_file.map(|file| {
+                    let chunks = FileChunkStream::new(file);
+                    Response::new(Body::wrap_stream(chunks))
+                });
+                Box::new(body)
+            } else {
+                response_with_code(StatusCode::NOT_FOUND)
+            }
+        }
         (&Method::POST, "/upload") => {
             let name: String = thread_rng().sample_iter(&Alphanumeric).take(20).collect();
 
+            // ? file extension
             let mut filepath = files.to_path_buf();
             filepath.push(&name);
 
