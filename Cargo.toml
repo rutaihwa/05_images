@@ -8,4 +8,6 @@ edition = "2018"
 
 [dependencies]
 hyper = "0.12"
+rand = "0.5"
 futures = "0.1"
+tokio = "0.1"
